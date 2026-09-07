@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Baseplate estilo Roblox Studio - Cidade + Carro</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #7ec0ee; font-family: sans-serif; }
+  #info {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: #fff;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    z-index: 10;
+    user-select: none;
+  }
+  canvas { display: block; touch-action: none; }
+
+  /* ---------- Controles de toque (celular/tablet) ---------- */
+  #touchControls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 20;
+    display: none;
+  }
+  #joystickBase {
+    position: absolute;
+    left: 30px;
+    bottom: 30px;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 2px solid rgba(255,255,255,0.4);
+    pointer-events: auto;
+    touch-action: none;
+  }
+  #joystickStick {
+    position: absolute;
+    left: 35px;
+    top: 35px;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.6);
+    pointer-events: none;
+  }
+  #jumpButton {
+    position: absolute;
+    right: 35px;
+    bottom: 45px;
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.25);
+    border: 2px solid rgba(255,255,255,0.5);
+    color: #fff;
+    font-size: 14px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    touch-action: none;
+    user-select: none;
+  }
+  #jumpButton:active {
+    background: rgba(255,255,255,0.45);
+  }
+  
+  /* Botão de spawn de carro e troca de câmera */
+  #actionButtons {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 10px;
+    z-index: 10;
+  }
+  .actionBtn {
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    border: 2px solid rgba(255,255,255,0.5);
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
+  }
+  .actionBtn:active {
+    background: rgba(0,0,0,0.8);
+  }
+</style>
+</head>
+<body>
+<div id="info">
+  <b>WASD</b> ou <b>setas</b> = andar &nbsp; | &nbsp; <b>Espaço</b> = pular &nbsp; | &nbsp; <b>Mouse (arrastar)</b> = girar câmera &nbsp; | &nbsp; <b>C</b> = trocar câmera &nbsp; | &nbsp; <b>V</b> = spawnar carro
+</div>
+
+<div id="actionButtons">
+  <button class="actionBtn" id="spawnCarBtn">🚗 Spawn Carro (V)</button>
+  <button class="actionBtn" id="toggleCameraBtn">📷 Trocar Câmera (C)</button>
+</div>
+
+<div id="touchControls">
+  <div id="joystickBase">
+    <div id="joystickStick"></div>
+  </div>
+  <div id="jumpButton">PULAR</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ---------- CENA BÁSICA ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x7ec0ee);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// ---------- LUZ ----------
+const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+scene.add(hemiLight);
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(50, 80, 30);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(4096, 4096);
+dirLight.shadow.camera.left = -150;
+dirLight.shadow.camera.right = 150;
+dirLight.shadow.camera.top = 150;
+dirLight.shadow.camera.bottom = -150;
+scene.add(dirLight);
+
+// ---------- BASEPLATE MAIOR ----------
+const plateSize = 400;
+const plateGeo = new THREE.BoxGeometry(plateSize, 1, plateSize);
+const plateMat = new THREE.MeshStandardMaterial({ color: 0x4a7c2f });
+const baseplate = new THREE.Mesh(plateGeo, plateMat);
+baseplate.position.y = -0.5;
+baseplate.receiveShadow = true;
+scene.add(baseplate);
+
+// Grade
+const grid = new THREE.GridHelper(plateSize, plateSize / 8, 0x2f5720, 0x2f5720);
+grid.position.y = 0.01;
+scene.add(grid);
+
+// ---------- CIDADE PROCEDURAL (blocos estilo Roblox) ----------
+function createBuilding(x, z, width, depth, height, color) {
+  const geo = new THREE.BoxGeometry(width, height, depth);
+  const mat = new THREE.MeshStandardMaterial({ color });
+  const building = new THREE.Mesh(geo, mat);
+  building.position.set(x, height / 2, z);
+  building.castShadow = true;
+  building.receiveShadow = true;
+  scene.add(building);
+  return building;
+}
+
+const cityGroup = new THREE.Group();
+scene.add(cityGroup);
+
+// Gerar quarteirões
+const blockSize = 40;
+const streetWidth = 12;
+const numBlocks = 6;
+
+for (let i = 0; i < numBlocks; i++) {
+  for (let j = 0; j < numBlocks; j++) {
+    const x = (i - numBlocks/2) * (blockSize + streetWidth);
+    const z = (j - numBlocks/2) * (blockSize + streetWidth);
+    
+    // Prédios nos cantos do quarteirão
+    const buildingWidth = blockSize * 0.35;
+    const buildingDepth = blockSize * 0.35;
+    const height = 8 + Math.random() * 25;
+    const color = new THREE.Color().setHSL(Math.random(), 0.5, 0.5);
+    
+    createBuilding(x - blockSize/4, z - blockSize/4, buildingWidth, buildingDepth, height, color);
+    createBuilding(x + blockSize/4, z - blockSize/4, buildingWidth, buildingDepth, height * 0.8, new THREE.Color().setHSL(Math.random(), 0.5, 0.5));
+    createBuilding(x - blockSize/4, z + blockSize/4, buildingWidth, buildingDepth, height * 1.2, new THREE.Color().setHSL(Math.random(), 0.5, 0.5));
+    createBuilding(x + blockSize/4, z + blockSize/4, buildingWidth, buildingDepth, height * 0.6, new THREE.Color().setHSL(Math.random(), 0.5, 0.5));
+  }
+}
+
+// ---------- MONTANHAS QUADRADINHAS AO REDOR ----------
+function createMountain(x, z, size, height) {
+  const geo = new THREE.BoxGeometry(size, height, size);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x6b5b4f });
+  const mountain = new THREE.Mesh(geo, mat);
+  mountain.position.set(x, height / 2, z);
+  mountain.castShadow = true;
+  mountain.receiveShadow = true;
+  scene.add(mountain);
+}
+
+const mountainRing = 180;
+for (let i = 0; i < 16; i++) {
+  const angle = (i / 16) * Math.PI * 2;
+  const x = Math.cos(angle) * mountainRing;
+  const z = Math.sin(angle) * mountainRing;
+  const size = 25 + Math.random() * 20;
+  const height = 30 + Math.random() * 40;
+  createMountain(x, z, size, height);
+}
+
+// ---------- PERSONAGEM ----------
+const player = new THREE.Group();
+
+const torsoMat = new THREE.MeshStandardMaterial({ color: 0x00a2ff });
+const limbMat = new THREE.MeshStandardMaterial({ color: 0xffcc99 });
+const headMat = new THREE.MeshStandardMaterial({ color: 0xffcc99 });
+
+const torso = new THREE.Mesh(new THREE.BoxGeometry(1, 1.2, 0.5), torsoMat);
+torso.position.y = 1.6;
+torso.castShadow = true;
+player.add(torso);
+
+const head = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), headMat);
+head.position.y = 2.6;
+head.castShadow = true;
+player.add(head);
+
+const armGeo = new THREE.BoxGeometry(0.35, 1.1, 0.35);
+const armL = new THREE.Mesh(armGeo, limbMat);
+armL.position.set(-0.7, 1.6, 0);
+armL.castShadow = true;
+player.add(armL);
+
+const armR = new THREE.Mesh(armGeo, limbMat);
+armR.position.set(0.7, 1.6, 0);
+armR.castShadow = true;
+player.add(armR);
+
+const legGeo = new THREE.BoxGeometry(0.4, 1.1, 0.4);
+const legL = new THREE.Mesh(legGeo, new THREE.MeshStandardMaterial({ color: 0x333333 }));
+legL.position.set(-0.3, 0.45, 0);
+legL.castShadow = true;
+player.add(legL);
+
+const legR = new THREE.Mesh(legGeo, new THREE.MeshStandardMaterial({ color: 0x333333 }));
+legR.position.set(0.3, 0.45, 0);
+legR.castShadow = true;
+player.add(legR);
+
+player.position.set(0, 0, 0);
+scene.add(player);
+
+// ---------- CARRO QUADRADINHO ----------
+let car = null;
+let inCar = false;
+
+function spawnCar() {
+  if (car) {
+    scene.remove(car);
+  }
+  
+  car = new THREE.Group();
+  
+  // Corpo do carro
+  const bodyGeo = new THREE.BoxGeometry(4, 1.5, 7);
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff3333 });
+  const carBody = new THREE.Mesh(bodyGeo, bodyMat);
+  carBody.position.y = 1.25;
+  carBody.castShadow = true;
+  car.add(carBody);
+  
+  // Cabine
+  const cabinGeo = new THREE.BoxGeometry(3, 1.2, 4);
+  const cabinMat = new THREE.MeshStandardMaterial({ color: 0x3366ff });
+  const carCabin = new THREE.Mesh(cabinGeo, cabinMat);
+  carCabin.position.y = 2.4;
+  carCabin.position.z = -0.3;
+  carCabin.castShadow = true;
+  car.add(carCabin);
+  
+  // Rodas
+  const wheelGeo = new THREE.CylinderGeometry(0.8, 0.8, 0.5, 16);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  
+  const wheelPositions = [
+    { x: -2, z: 2.2 }, { x: 2, z: 2.2 },
+    { x: -2, z: -2.2 }, { x: 2, z: -2.2 }
+  ];
+  
+  wheelPositions.forEach(pos => {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(pos.x, 0.8, pos.z);
+    wheel.castShadow = true;
+    car.add(wheel);
+  });
+  
+  car.position.set(15, 0, 15);
+  scene.add(car);
+}
+
+// ---------- MOVIMENTO ----------
+const keys = {};
+window.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  
+  // Spawnar carro com V
+  if (e.code === 'KeyV') {
+    spawnCar();
+    // Entrar no carro automaticamente
+    inCar = true;
+    player.visible = false;
+  }
+  
+  // Trocar câmera com C
+  if (e.code === 'KeyC') {
+    cameraMode = (cameraMode + 1) % 3;
+  }
+});
+window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+// Botões de ação
+document.getElementById('spawnCarBtn').addEventListener('click', () => {
+  spawnCar();
+  inCar = true;
+  player.visible = false;
+});
+
+document.getElementById('toggleCameraBtn').addEventListener('click', () => {
+  cameraMode = (cameraMode + 1) % 3;
+});
+
+let velocityY = 0;
+let onGround = true;
+const speed = 8;
+const gravity = -25;
+const jumpForce = 9;
+
+// Controles do carro
+let carSpeed = 0;
+let carSteering = 0;
+const carMaxSpeed = 25;
+const carAcceleration = 12;
+const carDeceleration = 8;
+const carTurnSpeed = 2.5;
+
+// ---------- CÂMERA ----------
+let camAngle = 0;
+let camPitch = 0.35;
+let camDistance = 9;
+let isDragging = false;
+let lastMouseX = 0, lastMouseY = 0;
+
+// Modos de câmera: 0 = terceira pessoa (padrão), 1 = primeira pessoa, 2 = topo
+let cameraMode = 0;
+
+renderer.domElement.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+});
+window.addEventListener('mouseup', () => isDragging = false);
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  const dx = e.clientX - lastMouseX;
+  const dy = e.clientY - lastMouseY;
+  camAngle -= dx * 0.005;
+  camPitch = Math.min(1.2, Math.max(0.05, camPitch - dy * 0.005));
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+});
+
+renderer.domElement.addEventListener('wheel', (e) => {
+  camDistance += e.deltaY * 0.01;
+  camDistance = Math.min(25, Math.max(3, camDistance));
+});
+
+// ---------- CONTROLES DE TOQUE ----------
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const touchControls = document.getElementById('touchControls');
+const joystickBase = document.getElementById('joystickBase');
+const joystickStick = document.getElementById('joystickStick');
+const jumpButton = document.getElementById('jumpButton');
+
+if (isTouchDevice) {
+  touchControls.style.display = 'block';
+  document.getElementById('info').textContent = 'Joystick = andar  |  Botão PULAR = pular  |  Arraste = girar câmera  |  C = câmera  |  V = carro';
+}
+
+let joystickVector = { x: 0, y: 0 };
+let joystickTouchId = null;
+const joystickMaxRadius = 40;
+
+function getTouchPos(touch, el) {
+  const rect = el.getBoundingClientRect();
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+joystickBase.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const touch = e.changedTouches[0];
+  joystickTouchId = touch.identifier;
+}, { passive: false });
+
+joystickBase.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (touch.identifier !== joystickTouchId) continue;
+    const rect = joystickBase.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const pos = getTouchPos(touch, joystickBase);
+    let dx = pos.x - centerX;
+    let dy = pos.y - centerY;
+    const dist = Math.min(Math.sqrt(dx * dx + dy * dy), joystickMaxRadius);
+    const angle = Math.atan2(dy, dx);
+    dx = Math.cos(angle) * dist;
+    dy = Math.sin(angle) * dist;
+    joystickStick.style.left = (35 + dx) + 'px';
+    joystickStick.style.top = (35 + dy) + 'px';
+    joystickVector.x = dx / joystickMaxRadius;
+    joystickVector.y = dy / joystickMaxRadius;
+  }
+}, { passive: false });
+
+function resetJoystick(e) {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier !== joystickTouchId) continue;
+    joystickTouchId = null;
+    joystickVector = { x: 0, y: 0 };
+    joystickStick.style.left = '35px';
+    joystickStick.style.top = '35px';
+  }
+}
+joystickBase.addEventListener('touchend', resetJoystick);
+joystickBase.addEventListener('touchcancel', resetJoystick);
+
+jumpButton.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  keys['Space'] = true;
+}, { passive: false });
+jumpButton.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  keys['Space'] = false;
+});
+
+let cameraTouchId = null;
+let lastTouchX = 0, lastTouchY = 0;
+
+renderer.domElement.addEventListener('touchstart', (e) => {
+  const touch = e.changedTouches[0];
+  cameraTouchId = touch.identifier;
+  lastTouchX = touch.clientX;
+  lastTouchY = touch.clientY;
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchmove', (e) => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier !== cameraTouchId) continue;
+    const dx = touch.clientX - lastTouchX;
+    const dy = touch.clientY - lastTouchY;
+    camAngle -= dx * 0.005;
+    camPitch = Math.min(1.2, Math.max(0.05, camPitch - dy * 0.005));
+    lastTouchX = touch.clientX;
+    lastTouchY = touch.clientY;
+  }
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchend', (e) => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === cameraTouchId) cameraTouchId = null;
+  }
+});
+
+// ---------- LOOP ----------
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = Math.min(clock.getDelta(), 0.05);
+
+  if (inCar && car) {
+    // Controles do carro
+    let accelerate = 0;
+    let steer = 0;
+    
+    if (keys['KeyW'] || keys['ArrowUp'] || joystickVector.y < -0.05) accelerate = 1;
+    if (keys['KeyS'] || keys['ArrowDown'] || joystickVector.y > 0.05) accelerate = -1;
+    if (keys['KeyA'] || keys['ArrowLeft'] || joystickVector.x < -0.05) steer = 1;
+    if (keys['KeyD'] || keys['ArrowRight'] || joystickVector.x > 0.05) steer = -1;
+    
+    // Aceleração
+    if (accelerate !== 0) {
+      carSpeed += accelerate * carAcceleration * delta;
+    } else {
+      // Desaceleração
+      if (carSpeed > 0) {
+        carSpeed = Math.max(0, carSpeed - carDeceleration * delta);
+      } else if (carSpeed < 0) {
+        carSpeed = Math.min(0, carSpeed + carDeceleration * delta);
+      }
+    }
+    
+    // Limitar velocidade
+    carSpeed = Math.max(-carMaxSpeed, Math.min(carMaxSpeed, carSpeed));
+    
+    // Virar (só quando está em movimento)
+    if (Math.abs(carSpeed) > 0.5) {
+      car.rotation.y += steer * carTurnSpeed * delta * (carSpeed / carMaxSpeed);
+    }
+    
+    // Mover carro
+    car.position.x += Math.sin(car.rotation.y) * carSpeed * delta;
+    car.position.z += Math.cos(car.rotation.y) * carSpeed * delta;
+    
+    // Limites do mapa
+    const half = plateSize / 2 - 5;
+    car.position.x = Math.max(-half, Math.min(half, car.position.x));
+    car.position.z = Math.max(-half, Math.min(half, car.position.z));
+    
+    // Câmera do carro
+    if (cameraMode === 0) {
+      // Terceira pessoa (atrás do carro)
+      const camX = car.position.x + Math.sin(car.rotation.y) * -12;
+      const camZ = car.position.z + Math.cos(car.rotation.y) * -12;
+      const camY = car.position.y + 6;
+      camera.position.set(camX, camY, camZ);
+      camera.lookAt(car.position);
+    } else if (cameraMode === 1) {
+      // Primeira pessoa (dentro do carro)
+      const camX = car.position.x + Math.sin(car.rotation.y) * 1.5;
+      const camZ = car.position.z + Math.cos(car.rotation.y) * 1.5;
+      const camY = car.position.y + 2.5;
+      camera.position.set(camX, camY, camZ);
+      camera.lookAt(
+        car.position.x + Math.sin(car.rotation.y) * 20,
+        car.position.y + 2,
+        car.position.z + Math.cos(car.rotation.y) * 20
+      );
+    } else {
+      // Vista de topo
+      camera.position.set(car.position.x, 40, car.position.z + 30);
+      camera.lookAt(car.position);
+    }
+    
+    // Sair do carro com Espaço
+    if (keys['Space'] && Math.abs(carSpeed) < 1) {
+      inCar = false;
+      player.visible = true;
+      player.position.copy(car.position);
+      player.position.y = 0;
+    }
+  } else {
+    // Movimento do personagem
+    const camForward = new THREE.Vector3();
+    camera.getWorldDirection(camForward);
+    camForward.y = 0;
+    camForward.normalize();
+    const camRight = new THREE.Vector3().crossVectors(camForward, camera.up).normalize();
+
+    let moveDir = new THREE.Vector3();
+    if (keys['KeyW'] || keys['ArrowUp']) moveDir.add(camForward);
+    if (keys['KeyS'] || keys['ArrowDown']) moveDir.sub(camForward);
+    if (keys['KeyD'] || keys['ArrowRight']) moveDir.add(camRight);
+    if (keys['KeyA'] || keys['ArrowLeft']) moveDir.sub(camRight);
+
+    if (Math.abs(joystickVector.x) > 0.05 || Math.abs(joystickVector.y) > 0.05) {
+      moveDir.addScaledVector(camForward, -joystickVector.y);
+      moveDir.addScaledVector(camRight, joystickVector.x);
+    }
+
+    if (moveDir.lengthSq() > 0) {
+      moveDir.normalize();
+      player.position.addScaledVector(moveDir, speed * delta);
+
+      const targetRotation = Math.atan2(moveDir.x, moveDir.z);
+      player.rotation.y += (targetRotation - player.rotation.y) * 0.2;
+
+      const half = plateSize / 2 - 1;
+      player.position.x = Math.max(-half, Math.min(half, player.position.x));
+      player.position.z = Math.max(-half, Math.min(half, player.position.z));
+    }
+
+    // Pulo
+    if ((keys['Space']) && onGround) {
+      velocityY = jumpForce;
+      onGround = false;
+    }
+    velocityY += gravity * delta;
+    player.position.y += velocityY * delta;
+    if (player.position.y <= 0) {
+      player.position.y = 0;
+      velocityY = 0;
+      onGround = true;
+    }
+
+    // Câmera do personagem
+    if (cameraMode === 0) {
+      const camX = player.position.x + camDistance * Math.sin(camAngle) * Math.cos(camPitch) * -1;
+      const camZ = player.position.z + camDistance * Math.cos(camAngle) * Math.cos(camPitch) * -1;
+      const camY = player.position.y + 2 + camDistance * Math.sin(camPitch);
+      camera.position.set(camX, camY, camZ);
+      camera.lookAt(player.position.x, player.position.y + 1.5, player.position.z);
+    } else if (cameraMode === 1) {
+      // Primeira pessoa (olhos do personagem)
+      const camX = player.position.x + Math.sin(player.rotation.y) * 0.5;
+      const camZ = player.position.z + Math.cos(player.rotation.y) * 0.5;
+      const camY = player.position.y + 2.4;
+      camera.position.set(camX, camY, camZ);
+      camera.lookAt(
+        player.position.x + Math.sin(player.rotation.y) * 10,
+        player.position.y + 2.4,
+        player.position.z + Math.cos(player.rotation.y) * 10
+      );
+    } else {
+      // Vista de topo
+      camera.position.set(player.position.x, 40, player.position.z + 30);
+      camera.lookAt(player.position);
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+
+// ---------- RESIZE ----------
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
